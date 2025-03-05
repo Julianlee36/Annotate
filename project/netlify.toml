@@ -1,0 +1,12 @@
+# Netlify configuration for single-page applications
+# This ensures that all routes are handled by the index.html file
+
+[build]
+  publish = "dist"
+  command = "npm run build"
+
+# The following redirect is necessary for client-side routing to work properly
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
