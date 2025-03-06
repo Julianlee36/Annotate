@@ -203,6 +203,19 @@ function VideoAnnotator() {
       if (selectedScene?.id === sceneId) {
         setSelectedScene(prev => prev ? { ...prev, folder_id: folderId } : null);
       }
+      
+      // Refresh scenes list after moving a scene
+      const { data, error: scenesError } = await supabase
+        .from('scenes')
+        .select('*')
+        .eq('user_id', user?.id)
+        .eq('folder_id', selectedFolderId);
+        
+      if (!scenesError) {
+        // Refresh the scenes view
+        setSaveMessage({ type: 'success', text: 'Scene moved successfully' });
+        setTimeout(() => setSaveMessage(null), 2000);
+      }
     } catch (error: any) {
       console.error('Error moving scene to folder:', error);
       setSaveMessage({

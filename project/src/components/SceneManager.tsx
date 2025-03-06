@@ -17,6 +17,14 @@ interface SceneManagerProps {
   onLoopingChange: (isLooping: boolean) => void;
 }
 
+interface Folder {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  level: number;
+  children?: Folder[];
+}
+
 const SceneManager: React.FC<SceneManagerProps> = ({
   currentTime,
   onSceneSelect,
@@ -34,7 +42,7 @@ const SceneManager: React.FC<SceneManagerProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedScene, setSelectedScene] = useState<string | null>(null);
-  const [folders, setFolders] = useState<{ id: string; name: string }[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
   const [showFolderMenu, setShowFolderMenu] = useState<string | null>(null);
 
   useEffect(() => {
@@ -43,6 +51,20 @@ const SceneManager: React.FC<SceneManagerProps> = ({
       fetchFolders();
     }
   }, [user, selectedFolderId]);
+
+  useEffect(() => {
+    // Listen for scene drop events from FolderManager
+    const handleSceneDrop = (e: CustomEvent) => {
+      const { sceneId, folderId } = e.detail;
+      onMoveToFolder(sceneId, folderId);
+    };
+
+    window.addEventListener('sceneDrop', handleSceneDrop as EventListener);
+    
+    return () => {
+      window.removeEventListener('sceneDrop', handleSceneDrop as EventListener);
+    };
+  }, [onMoveToFolder]);
 
   const fetchScenes = async () => {
     if (!user) return;
@@ -79,7 +101,7 @@ const SceneManager: React.FC<SceneManagerProps> = ({
     try {
       const { data, error } = await supabase
         .from('folders')
-        .select('id, name')
+        .select('id, name, parent_id, level')
         .eq('user_id', user.id)
         .order('name');
 
@@ -144,6 +166,68 @@ const SceneManager: React.FC<SceneManagerProps> = ({
     }
   };
 
+  // Organize folders into a hierarchy
+  const buildFolderHierarchy = (): Folder[] => {
+    // Create a map for quick folder lookup
+    const folderMap = new Map<string, Folder>();
+    
+    // First pass: create folder objects
+    folders.forEach(folder => {
+      folderMap.set(folder.id, { 
+        ...folder, 
+        children: [] 
+      });
+    });
+    
+    // Second pass: build hierarchy
+    const rootFolders: Folder[] = [];
+    folderMap.forEach(folder => {
+      if (folder.parent_id === null) {
+        rootFolders.push(folder);
+      } else {
+        const parent = folderMap.get(folder.parent_id);
+        if (parent) {
+          parent.children?.push(folder);
+        }
+      }
+    });
+    
+    return rootFolders;
+  };
+
+  const renderFolderOption = (folder: Folder, depth: number = 0) => {
+    const indent = "→ ".repeat(depth);
+    
+    return (
+      <React.Fragment key={folder.id}>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onMoveToFolder(showFolderMenu!, folder.id);
+            setShowFolderMenu(null);
+          }}
+          className="w-full text-left px-4 py-2 hover:bg-gray-700"
+          style={{ paddingLeft: `${depth * 16 + 16}px` }}
+        >
+          {indent}{folder.name}
+        </button>
+        
+        {folder.children && folder.children.map(child => 
+          renderFolderOption(child, depth + 1)
+        )}
+      </React.Fragment>
+    );
+  };
+
+  const handleDragStart = (e: React.DragEvent, sceneId: string) => {
+    e.dataTransfer.setData('text/plain', sceneId);
+    
+    // Dispatch a custom event to notify components about dragged scene
+    window.dispatchEvent(new CustomEvent('sceneDragStart', { 
+      detail: { sceneId }
+    }));
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center py-4">
@@ -151,6 +235,8 @@ const SceneManager: React.FC<SceneManagerProps> = ({
       </div>
     );
   }
+
+  const folderHierarchy = buildFolderHierarchy();
 
   return (
     <div className="space-y-4">
@@ -188,6 +274,8 @@ const SceneManager: React.FC<SceneManagerProps> = ({
                 : 'bg-gray-700 hover:bg-gray-600'
             }`}
             onClick={() => handleSceneClick(scene)}
+            draggable
+            onDragStart={(e) => handleDragStart(e, scene.id)}
           >
             <div className="flex-grow px-2">
               <div className="font-medium">{scene.name}</div>
@@ -208,7 +296,7 @@ const SceneManager: React.FC<SceneManagerProps> = ({
                   <FolderPlus size={16} />
                 </button>
                 {showFolderMenu === scene.id && (
-                  <div className="absolute right-0 mt-1 w-48 bg-gray-800 rounded-lg shadow-lg z-10">
+                  <div className="absolute right-0 mt-1 w-48 bg-gray-800 rounded-lg shadow-lg z-10 max-h-52 overflow-y-auto">
                     <div className="py-1">
                       <button
                         onClick={(e) => {
@@ -220,19 +308,8 @@ const SceneManager: React.FC<SceneManagerProps> = ({
                       >
                         Uncategorized
                       </button>
-                      {folders.map(folder => (
-                        <button
-                          key={folder.id}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onMoveToFolder(scene.id, folder.id);
-                            setShowFolderMenu(null);
-                          }}
-                          className="w-full text-left px-4 py-2 hover:bg-gray-700"
-                        >
-                          {folder.name}
-                        </button>
-                      ))}
+                      
+                      {folderHierarchy.map(folder => renderFolderOption(folder))}
                     </div>
                   </div>
                 )}

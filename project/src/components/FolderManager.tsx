@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Folder, Plus, FolderOpen, Trash2 } from 'lucide-react';
+import { Folder, Plus, FolderOpen, Trash2, ChevronRight, ChevronDown } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import type { Folder as FolderType } from '../types';
@@ -19,6 +19,9 @@ const FolderManager: React.FC<FolderManagerProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
+  const [parentFolderId, setParentFolderId] = useState<string | null>(null);
+  const [draggedSceneId, setDraggedSceneId] = useState<string | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -59,7 +62,9 @@ const FolderManager: React.FC<FolderManagerProps> = ({
         .from('folders')
         .insert([{
           user_id: user.id,
-          name: newFolderName.trim()
+          name: newFolderName.trim(),
+          parent_id: parentFolderId,
+          level: parentFolderId ? 1 : 0
         }])
         .select()
         .single();
@@ -69,6 +74,7 @@ const FolderManager: React.FC<FolderManagerProps> = ({
       setFolders([...folders, data]);
       setNewFolderName('');
       setIsCreating(false);
+      setParentFolderId(null);
     } catch (err: any) {
       setError(err.message);
       console.error('Error creating folder:', err);
@@ -102,6 +108,99 @@ const FolderManager: React.FC<FolderManagerProps> = ({
     }
   };
 
+  const toggleFolderExpanded = (folderId: string) => {
+    setExpandedFolders(prev => ({
+      ...prev,
+      [folderId]: !prev[folderId]
+    }));
+  };
+
+  const getChildFolders = (parentId: string | null) => {
+    return folders.filter(folder => folder.parent_id === parentId);
+  };
+
+  const renderFolder = (folder: FolderType, level = 0) => {
+    const childFolders = getChildFolders(folder.id);
+    const isExpanded = expandedFolders[folder.id];
+    const canHaveChildren = folder.level < 2;
+
+    return (
+      <div key={folder.id} className="ml-2">
+        <div
+          className={`flex items-center justify-between p-2 rounded cursor-pointer ${
+            selectedFolderId === folder.id
+              ? 'bg-blue-600'
+              : 'bg-gray-700 hover:bg-gray-600'
+          } group`}
+          onClick={() => onFolderSelect(folder.id)}
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.currentTarget.classList.add('bg-blue-400');
+          }}
+          onDragLeave={(e) => {
+            e.currentTarget.classList.remove('bg-blue-400');
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            e.currentTarget.classList.remove('bg-blue-400');
+            if (draggedSceneId) {
+              window.dispatchEvent(new CustomEvent('sceneDrop', { 
+                detail: { sceneId: draggedSceneId, folderId: folder.id }
+              }));
+              setDraggedSceneId(null);
+            }
+          }}
+        >
+          <div className="flex items-center gap-2">
+            {childFolders.length > 0 ? (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleFolderExpanded(folder.id);
+                }}
+                className="p-1 hover:bg-gray-600 rounded"
+              >
+                {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              </button>
+            ) : (
+              <div className="w-6"></div>
+            )}
+            <Folder size={16} />
+            <span>{folder.name}</span>
+          </div>
+          <div className="flex items-center">
+            {canHaveChildren && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsCreating(true);
+                  setParentFolderId(folder.id);
+                }}
+                className="p-1 hover:bg-green-600 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                title="Create Subfolder"
+              >
+                <Plus size={14} />
+              </button>
+            )}
+            <button
+              onClick={(e) => handleDeleteFolder(folder.id, e)}
+              className="p-1 hover:bg-red-600 rounded opacity-0 group-hover:opacity-100 transition-opacity ml-1"
+              title="Delete Folder"
+            >
+              <Trash2 size={14} />
+            </button>
+          </div>
+        </div>
+        
+        {isExpanded && childFolders.length > 0 && (
+          <div className="pl-4 border-l border-gray-600 ml-3 mt-1">
+            {childFolders.map(childFolder => renderFolder(childFolder, level + 1))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center py-4">
@@ -125,7 +224,10 @@ const FolderManager: React.FC<FolderManagerProps> = ({
       </div>
 
       {isCreating && (
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-2 p-3 bg-gray-700 rounded">
+          <p className="text-sm text-gray-300">
+            {parentFolderId ? 'Creating subfolder in: ' + (folders.find(f => f.id === parentFolderId)?.name || 'Unknown') : 'Creating root folder'}
+          </p>
           <input
             type="text"
             value={newFolderName}
@@ -173,6 +275,23 @@ const FolderManager: React.FC<FolderManagerProps> = ({
               : 'bg-gray-700 hover:bg-gray-600'
           }`}
           onClick={() => onFolderSelect(null)}
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.currentTarget.classList.add('bg-blue-400');
+          }}
+          onDragLeave={(e) => {
+            e.currentTarget.classList.remove('bg-blue-400');
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            e.currentTarget.classList.remove('bg-blue-400');
+            if (draggedSceneId) {
+              window.dispatchEvent(new CustomEvent('sceneDrop', { 
+                detail: { sceneId: draggedSceneId, folderId: null }
+              }));
+              setDraggedSceneId(null);
+            }
+          }}
         >
           <div className="flex items-center gap-2">
             <FolderOpen size={16} />
@@ -180,29 +299,7 @@ const FolderManager: React.FC<FolderManagerProps> = ({
           </div>
         </div>
 
-        {folders.map(folder => (
-          <div
-            key={folder.id}
-            className={`flex items-center justify-between p-2 rounded cursor-pointer ${
-              selectedFolderId === folder.id
-                ? 'bg-blue-600'
-                : 'bg-gray-700 hover:bg-gray-600'
-            }`}
-            onClick={() => onFolderSelect(folder.id)}
-          >
-            <div className="flex items-center gap-2">
-              <Folder size={16} />
-              <span>{folder.name}</span>
-            </div>
-            <button
-              onClick={(e) => handleDeleteFolder(folder.id, e)}
-              className="p-1 hover:bg-red-600 rounded opacity-0 group-hover:opacity-100 transition-opacity"
-              title="Delete Folder"
-            >
-              <Trash2 size={16} />
-            </button>
-          </div>
-        ))}
+        {getChildFolders(null).map(rootFolder => renderFolder(rootFolder))}
 
         {folders.length === 0 && !isCreating && (
           <div className="text-center py-4 text-gray-400">
